@@ -35,7 +35,7 @@ from typing import Callable
 import pandas as pd
 
 from dataset import DEFAULT_PATH, load
-from harness import COLUMNS, Data, evaluate
+from harness import COLUMNS, Data, evaluate, load_data
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MUTATIONS_PATH = ROOT / "data" / "red_team" / "test_mutations.parquet"
@@ -278,10 +278,9 @@ def summarize(report: pd.DataFrame, mutated: pd.DataFrame) -> pd.DataFrame:
 def run(detector_name, data_path=DEFAULT_PATH, out_dir=DEFAULT_OUT, names=None, n_boot=300,
         target_fpr=RED_TEAM_FPR):
     """Fit like train.py, evaluate on the mutation sets, write report.csv and summary.csv."""
-    from shortcut_check import load_frames   # same train/val/eval loading as the shortcut gate
     from train import fit_detector
 
-    data = load_frames(data_path)
+    data = load_data(data_path)
     test = load_test(data_path)
     mutated = build_mutations(test, names)
     detector, _ = fit_detector(detector_name, data)

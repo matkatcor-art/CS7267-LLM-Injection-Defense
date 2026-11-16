@@ -536,5 +536,6 @@ def main(argv=None) -> None:
     print(f"wrote figures to {FIG_DIR}")
     print(f"wrote {WRITEUP}")
 
+
 if __name__ == "__main__":
     main()

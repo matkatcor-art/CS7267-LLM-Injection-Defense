@@ -128,3 +128,42 @@ def test_gate_refuses_to_pass_when_length_already_saturates_the_eval_set(data):
     honest = BagOfWordsProbe().fit(train.text, train.label)
     verdict, detail = gate({"mcptox": (part, honest.predict_proba(part.text))}, table)
     assert verdict == "FAIL" and detail.rows_matched.iloc[0] < 20
+
+
+# ---- PR #40 review fixes -----------------------------------------------------------------------
+
+def _probe_table(eval_set, his):
+    return pd.DataFrame([{"probe": f"p{i}", "family": "cue", "eval_set": eval_set, "mode": "fitted",
+                          "auroc": 0.6, "auroc_lo": 0.5, "auroc_hi": hi} for i, hi in enumerate(his)])
+
+
+def _separable_frame(n=400, seed=0):
+    rng = np.random.default_rng(seed)
+    y = np.tile([0, 1], n // 2)
+    text = ["x" * int(rng.integers(20, 200)) for _ in y]          # length independent of label
+    frame = pd.DataFrame({"text": text, "label": y, "source": "s", "group": np.arange(n)})
+    return frame, y + rng.normal(0, 0.3, n)
+
+
+def test_gate_ignores_probe_with_nan_ci():
+    """A NaN auroc_hi used to sort last and be picked as 'best', turning into a misleading FAIL."""
+    from shortcut_probe import gate
+    frame, scores = _separable_frame()
+    verdict, table = gate({"t": (frame, scores)}, _probe_table("t", [0.6, np.nan]))
+    assert table.best_probe.item() == "p0" and table.beats_probe.item() is True
+    assert verdict == "PASS"
+
+
+def test_gate_is_inconclusive_when_no_probe_ci_is_usable():
+    from shortcut_probe import gate
+    frame, scores = _separable_frame()
+    verdict, table = gate({"t": (frame, scores)}, _probe_table("t", [np.nan]))
+    assert table.beats_probe.item() is None and verdict == "INCONCLUSIVE"
+
+
+def test_length_match_needs_min_rows():
+    from shortcut_probe import MIN_MATCHED_ROWS, length_matched_auroc
+    frame, scores = _separable_frame(n=MIN_MATCHED_ROWS - 20)
+    assert np.isnan(length_matched_auroc(frame, scores)[1])
+    frame, scores = _separable_frame(n=MIN_MATCHED_ROWS * 3)
+    assert not np.isnan(length_matched_auroc(frame, scores)[1])

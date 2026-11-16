@@ -15,11 +15,13 @@ Run on the real table:  PYTHONPATH=src/data:src/eval uv run python src/eval/shor
 
 from __future__ import annotations
 
+import copy
 import re
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
@@ -27,7 +29,6 @@ from sklearn.model_selection import GroupKFold, cross_val_predict
 from sklearn.neighbors import NearestNeighbors
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
-
 
 
 def bootstrap_ci(metric, y, scores, groups, n_boot=300, seed=7267, level=0.95):
@@ -160,7 +161,6 @@ def probe_battery(train, eval_sets, probes=None, fpr=0.05):
 
 def out_of_fold(probe, part, folds):
     """Out-of-fold scores: refit a copy of the probe on each group-disjoint fold."""
-    import copy
     text, y = np.asarray(part.text), part.label.to_numpy()
     out = np.zeros(len(part))
     for tr, te in GroupKFold(folds).split(text, y, part.group.to_numpy()):
@@ -174,7 +174,7 @@ def out_of_fold(probe, part, folds):
 # ---- 2. label-shuffle control ----------------------------------------------------------------
 
 def label_shuffle(make_detector, train, test, n_rounds=5, seed=7267):
-    """Refit on train with labels permuted ACROSS GROUPS, score test with the true labels.
+    """Refit on train with labels permuted across individual ROWS, score test with the true labels.
     A sound pipeline gives AUROC ~ 0.5. Much higher means test info leaks into training or
     the evaluation code is wrong. Returns the list of AUROCs, one per round."""
     rng = np.random.default_rng(seed)
@@ -188,6 +188,8 @@ def label_shuffle(make_detector, train, test, n_rounds=5, seed=7267):
 
 
 # ---- 3. length-matched evaluation -------------------------------------------------------------
+
+MIN_MATCHED_ROWS = 100   # below this, a length-matched AUROC is too noisy to call pass or fail
 
 def length_matched_mask(df, n_bins=10, seed=7267):
     """Boolean mask keeping, inside each source, equal numbers of benign and adversarial rows
@@ -213,11 +215,12 @@ def length_matched_mask(df, n_bins=10, seed=7267):
     return keep
 
 
-def length_matched_auroc(df, scores, seed=7267):
-    """(AUROC on all rows, AUROC on length-matched rows, rows kept, residual length separability)."""
+def length_matched_auroc(df, scores, seed=7267, min_rows=MIN_MATCHED_ROWS):
+    """(AUROC on all rows, AUROC on length-matched rows, rows kept, residual length separability).
+    The matched AUROC is NaN when fewer than `min_rows` rows can be matched."""
     scores = np.asarray(scores)
     mask = length_matched_mask(df, seed=seed)
-    if mask.sum() < 20 or df.label[mask].nunique() < 2:
+    if mask.sum() < min_rows or df.label[mask].nunique() < 2:
         return float("nan"), float("nan"), int(mask.sum()), float("nan")
     full = roc_auc_score(df.label, scores)
     matched = roc_auc_score(df.label[mask], scores[mask])
@@ -255,9 +258,6 @@ def source_identity(df, seed=7267):
     return {"accuracy": acc, "majority_rate": float(df.source.value_counts(normalize=True).iloc[0])}
 
 
-from sklearn.base import BaseEstimator, ClassifierMixin  # noqa: E402
-
-
 class BagOfWordsProbeMulti(BaseEstimator, ClassifierMixin):
     def fit(self, X, y):
         self.m_ = make_pipeline(TfidfVectorizer(min_df=2, sublinear_tf=True), LogisticRegression(max_iter=1000))
@@ -280,23 +280,30 @@ def gate(detector_scores: dict, probe_table: pd.DataFrame, margin=0.05, min_matc
       (b) on length-matched rows the detector must keep >= min_matched_ratio of its excess
           over 0.5. If too few rows can be matched (classes barely overlap in length) the
           check cannot be run: that is INCONCLUSIVE, not a pass, and not silently a fail.
+    A probe whose CI is NaN (too few valid bootstrap replicates) is not used as the bar; if no
+    probe or the detector itself has a usable CI, check (a) cannot run and is INCONCLUSIVE.
     FAIL if any check fails; else INCONCLUSIVE if any could not run; else PASS."""
     rows = []
     for name, (frame, scores) in detector_scores.items():
         auroc, lo, hi = bootstrap_ci(roc_auc_score, frame.label, scores, frame.group, n_boot=300)
         fitted = probe_table[(probe_table.eval_set == name) & (probe_table["mode"] == "fitted")
                              & (probe_table.family == "cue")]
-        best = fitted.sort_values("auroc_hi").iloc[-1]
+        usable = fitted.dropna(subset=["auroc_hi"])
+        if len(usable) and not np.isnan(lo):
+            best = usable.sort_values("auroc_hi").iloc[-1]
+            best_probe, best_hi, beats = best.probe, best.auroc_hi, bool(lo > best.auroc_hi + margin)
+        else:
+            best_probe, best_hi, beats = None, float("nan"), None
         full, matched, kept, resid = length_matched_auroc(frame, scores)
         keeps = None if np.isnan(matched) else bool((matched - 0.5) >= min_matched_ratio * (full - 0.5))
         rows.append({"eval_set": name, "detector_auroc": auroc, "ci_lo": lo,
-                     "best_probe": best.probe, "probe_auroc_hi": best.auroc_hi,
-                     "beats_probe": bool(lo > best.auroc_hi + margin),
+                     "best_probe": best_probe, "probe_auroc_hi": best_hi,
+                     "beats_probe": beats,
                      "length_matched_auroc": matched, "rows_matched": kept, "survives_length_match": keeps})
-    table = pd.DataFrame(rows)
-    if not table.beats_probe.all() or (table.survives_length_match == False).any():  # noqa: E712
+    table = pd.DataFrame(rows).astype({"beats_probe": object, "survives_length_match": object})
+    if (table.beats_probe == False).any() or (table.survives_length_match == False).any():  # noqa: E712
         return "FAIL", table
-    if table.survives_length_match.isna().any():
+    if table.beats_probe.isna().any() or table.survives_length_match.isna().any():
         return "INCONCLUSIVE", table
     return "PASS", table
 
@@ -360,7 +367,7 @@ class ShortcutReport:
 
 
 def check_detector(detector, train, eval_sets, make_detector=None, probe_table=None,
-                   leak_against="in-dist", shuffle_rounds=3) -> ShortcutReport:
+                   leak_against="in-dist", shuffle_rounds=3, can_rescore=True) -> ShortcutReport:
     """Run every shortcut check on one fitted detector.
 
     detector      fitted object with predict_proba(texts) -> P(adversarial)
@@ -368,19 +375,25 @@ def check_detector(detector, train, eval_sets, make_detector=None, probe_table=N
     eval_sets     {name: frame}; the frame named `leak_against` is also used for the leak and
                   label-shuffle checks (it must be a train_pool test split, not a holdout)
     make_detector zero-argument factory for an UNFITTED copy, needed for the label-shuffle check
+    can_rescore   False for precomputed scores (B2 score files): they only cover the dataset's own
+                  texts, so the padding check, which scores new padded texts, is skipped and said so
     """
     probe_table = probe_table if probe_table is not None else probe_battery(train, eval_sets)
     scored = {k: (v, detector.predict_proba(v.text)) for k, v in eval_sets.items() if v.label.nunique() == 2}
     verdict, gate_table = gate(scored, probe_table)
     reasons = []
     for r in gate_table.itertuples():
-        if not r.beats_probe:
+        if r.beats_probe is None:
+            reasons.append(f"{r.eval_set}: no usable bootstrap CI for the detector or the cue probes; "
+                           "probe comparison not run")
+        elif not r.beats_probe:
             reasons.append(f"{r.eval_set}: AUROC CI-lower {r.ci_lo:.3f} does not beat best probe "
                            f"({r.best_probe}, CI-upper {r.probe_auroc_hi:.3f}) by the margin")
         if r.survives_length_match is False:
             reasons.append(f"{r.eval_set}: AUROC falls to {r.length_matched_auroc:.3f} on length-matched rows")
         if r.survives_length_match is None:
-            reasons.append(f"{r.eval_set}: too few rows ({r.rows_matched}) could be length-matched; check not run")
+            reasons.append(f"{r.eval_set}: only {r.rows_matched} rows could be length-matched "
+                           f"(need {MIN_MATCHED_ROWS}); check not run")
 
     shuffle = None
     test = eval_sets.get(leak_against)
@@ -394,7 +407,9 @@ def check_detector(detector, train, eval_sets, make_detector=None, probe_table=N
         reasons.append("label shuffle skipped: no make_detector given")
 
     padding = {}
-    for name, frame in scored.items():
+    if not can_rescore:
+        reasons.append("padding check skipped: precomputed scores cannot score new (padded) texts")
+    for name, frame in (scored.items() if can_rescore else ()):
         padding[name] = padding_invariance(detector, frame[0])
         if padding[name][2] > PAD_MAX_DELTA:
             verdict = "FAIL"

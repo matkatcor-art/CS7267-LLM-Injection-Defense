@@ -5,6 +5,7 @@
 Fits the detector exactly as train.py does (train.fit_detector on train_pool train), scores the
 same three eval sets (train_pool test, MCPTox LOSO, MSB transfer), then runs check_detector:
 probes it must beat, label shuffle, length matching, padding invariance, split leaks.
+For --detector deberta (a score file) label shuffle and padding are skipped: both need new scores.
 Prints PASS / FAIL / INCONCLUSIVE with reasons. Nothing is logged to MLflow here.
 """
 import argparse
@@ -14,30 +15,12 @@ from pathlib import Path
 import pandas as pd
 
 from baselines import LengthBaseline
-from dataset import DEFAULT_PATH, load
-from harness import COLUMNS, Data
+from dataset import DEFAULT_PATH
+from harness import load_data
+from precomputed import PrecomputedScores
 from shortcut_probe import check_detector
 from tfidf import TfidfDetector
 from train import fit_detector
-
-COLS = COLUMNS + [c for c in ["group"] if c not in COLUMNS]  # harness now includes group
-
-
-def load_frames(path):
-    def rows(purpose, **kw):
-        return load(purpose, path=path, **kw).select(COLS).to_pandas()
-
-    data = Data(
-        train=rows("fit", roles=["train_pool"], splits=["train"]),
-        val=rows("fit", roles=["train_pool"], splits=["val"]),
-        evals={
-            "test": rows("eval", roles=["train_pool"], splits=["test"]),
-            "mcptox": rows("eval", sources=["mcptox"]),
-            "msb": rows("eval", sources=["msb"]),
-        },
-    )
-    return data
-
 
 def factory(name, params):
     """Unfitted copy for the label-shuffle check; None when refitting would be too costly."""
@@ -56,10 +39,10 @@ def main(argv=None):
     ap.add_argument("--out", default=None, help="folder for gate.csv, probes.csv, verdict.txt")
     args = ap.parse_args(argv)
 
-    data = load_frames(args.data)
+    data = load_data(args.data)
     detector, params = fit_detector(args.detector, data, scores=args.scores)
     report = check_detector(detector, data.train, data.evals, make_detector=factory(args.detector, params),
-                            leak_against="test")
+                            leak_against="test", can_rescore=not isinstance(detector, PrecomputedScores))
 
     pd.set_option("display.width", 220)
     print(f"{args.detector}: {report.verdict}")

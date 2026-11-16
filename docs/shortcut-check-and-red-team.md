@@ -22,9 +22,9 @@ injection. The known one is length, which points opposite ways by source.
 | Check | Rule (defaults, not yet team-agreed) |
 |---|---|
 | Beats the cheap cues | Detector AUROC CI-lower must exceed the best *fitted* cue probe's CI-upper by **0.05** on each eval set. Cues: length only, and length + punctuation/uppercase/digit rates. |
-| Survives length matching | Balance classes per length decile inside each source; the detector must keep **≥ 80%** of its above-chance AUROC. Too few matchable rows → INCONCLUSIVE. |
-| Label shuffle | Retrained on shuffled labels, mean AUROC ≤ 0.60. |
-| Padding | Lengthening benign rows with other benign text from the same source may move AUROC ≤ 0.10. |
+| Survives length matching | Balance classes per length decile inside each source; the detector must keep **≥ 80%** of its above-chance AUROC. Fewer than **100** matchable rows → INCONCLUSIVE (too noisy to call). |
+| Label shuffle | Retrained on row-shuffled labels, mean AUROC ≤ 0.60. Skipped for B2 score files (no refit possible). |
+| Padding | Lengthening benign rows with other benign text from the same source may move AUROC ≤ 0.10. Skipped for B2 score files, which cannot score new texts (said in the reasons). |
 | Split leaks | Zero shared groups and zero exact duplicate texts between train and test. |
 
 ### Results on the real data (2026-11-15, `main` at 26e06a8)
@@ -36,8 +36,9 @@ injection. The known one is length, which points opposite ways by source.
 
 - TF-IDF passes cleanly in distribution: it beats every cue probe and keeps its signal under length
   matching (0.867).
-- On both holdouts **length alone beats TF-IDF**. TF-IDF does not lean on length there (its
-  length-matched AUROC is higher, 0.71–0.72), but it does not generalize either.
+- On both holdouts **length alone beats TF-IDF**. On MCPTox TF-IDF does not lean on length (its
+  length-matched AUROC is higher, 0.71 on 222 rows), but it does not generalize either. On MSB only
+  26 rows can be length-matched, below the 100-row minimum, so that check is not run there.
 - Label shuffle ≈ 0.50 for both (no label leak). Shared groups 0, exact duplicates 0; 13 near-duplicate
   pairs (char-4gram cosine ≥ 0.9) cross train/test, reported but not gated.
 - Probe numbers worth quoting: inside PoisonedRAG, length *fitted on the pool* scores 0.14 but the
