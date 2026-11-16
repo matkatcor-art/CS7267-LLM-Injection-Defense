@@ -226,10 +226,13 @@ class DebertaDetector:
                 raise FloatingPointError(f"non-finite loss at epoch {epoch}; rerun with fp16=False")
             (scaler.scale(share) if scaler else share).backward()
             total += share.item()
+        # None means this run was trained before clipping (an old detector.json has no key).
         # Unscale before clipping: clip_grad_norm_ must see real gradients, not scaled ones.
-        if scaler:
-            scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+        # When clipping is skipped, scaler.step unscales on its own.
+        if self.max_grad_norm is not None:
+            if scaler:
+                scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
         if scaler:
             scaler.step(optimizer)
             scaler.update()
@@ -476,6 +479,8 @@ class DebertaDetector:
 
         path = Path(path)
         saved = json.loads((path / "detector.json").read_text())
+        # A model saved before clipping has no key. Filling in 1.0 would record that run as clipped.
+        saved["config"].setdefault("max_grad_norm", None)
         detector = cls(**saved["config"], device=device)
         detector.tokenizer = AutoTokenizer.from_pretrained(path / "tokenizer")
         detector.tokenizer.model_max_length = 10**9
