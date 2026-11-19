@@ -36,7 +36,7 @@ Plan: `docs/superpowers/plans/2026-11-07-deberta-detector.md`, Task 11.
 - [ ] 1.3 Row 2, three seeds, at the chosen weight.
 - [ ] 1.4 Row 3 (BIPIA only), three seeds. This is the main ablation.
 - [ ] 1.5 Track the score files: `dvc add report/deberta_scores`, commit the `.dvc` file, then `make push-data`.
-- [ ] 1.6 Log every reported run to MLflow (`make evaluate DETECTOR=deberta SCORES=...`).
+- [x] 1.6 Log every reported run to MLflow (`make evaluate DETECTOR=deberta SCORES=...`).
 - [ ] 1.7 `make b2-report`: writes `b2_deberta_row{1,2,3}.csv` and `b2_verdict.md`. Do not rerun anything after reading the verdict.
 - [ ] 1.8 DVC-track seed 7267 of the selected row (`make push-large`).
 
