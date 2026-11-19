@@ -14,9 +14,7 @@ adversarial or benign, and measures how well it generalizes:
 
 AgentDojo is pinned as the end-to-end attack-success harness for evaluating a defended agent.
 
-**Status:** the data pipeline and labeled dataset are in place. Detector baselines, training
-and evaluation are the next phase; experiments are tracked in the team's shared MLflow
-server.
+**Status:** B2 DeBERTa verdict is **fail**. The selected configuration is **row2** (pairwise weight 0.5). On MCPTox, none of its three seeds beat B1's TPR bar of 0.2247. Row 1 seed 7267 was trained before gradient clipping, so the later row 1 seeds are not identical to it, and that is not a reason to retrain row1-s7267. Experiments are tracked in the team's shared MLflow server.
 
 ## Repository layout
 
