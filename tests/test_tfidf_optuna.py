@@ -1,6 +1,7 @@
 """B1-Optuna: the configurable detector, the search space, the holdout guard and the study."""
 
 import json
+import re
 
 import numpy as np
 import optuna
@@ -11,7 +12,8 @@ from dataset import HoldoutError, load
 from harness import load_data
 from tfidf import TfidfDetector
 from tfidf_optuna import (
-    CHAR_RANGES, TunedTfidfDetector, check_fit_rows, detector_params, main, run_study, suggest,
+    CHAR_RANGES, TunedTfidfDetector, check_fit_rows, detector_params, main, progress_line, run_study,
+    suggest,
 )
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -75,6 +77,31 @@ def test_a_fixed_seed_gives_the_same_best_trial(dataset_path):
     assert first.best_value == second.best_value
     assert folds.max() == 4
     assert all(f"auroc_fold{f}" in first.best_trial.user_attrs for f in range(5))
+
+
+def test_each_trial_prints_a_progress_line(dataset_path, capsys):
+    run_study(train_rows(dataset_path), n_trials=3)
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("trial ")]
+    assert [line.split()[1] for line in lines] == ["1/3", "2/3", "3/3"]
+    pattern = re.compile(r"trial \d/3  COMPLETE [01]\.\d{4} +best [01]\.\d{4} \(#\d\) +\d+\.\ds$")
+    assert all(pattern.fullmatch(line) for line in lines), lines
+
+
+def test_progress_can_be_turned_off(dataset_path, capsys):
+    run_study(train_rows(dataset_path), n_trials=2, progress=False)
+    assert "trial " not in capsys.readouterr().out
+
+
+def test_a_pruned_trial_says_how_many_folds_it_ran():
+    study = optuna.create_study(direction="maximize")
+    study.add_trial(optuna.trial.create_trial(params={}, distributions={}, value=0.9))
+    pruned = optuna.trial.create_trial(state=optuna.trial.TrialState.PRUNED, params={},
+                                       distributions={}, user_attrs={"auroc_fold0": 0.5,
+                                                                     "auroc_fold1": 0.6})
+    study.add_trial(pruned)
+    line = progress_line(study, study.trials[1], 100)
+    assert line.startswith("trial   2/100  PRUNED after 2 folds")
+    assert "best 0.9000 (#0)" in line
 
 
 def test_main_writes_the_study_and_the_report(dataset_path, tmp_path, monkeypatch):

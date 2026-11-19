@@ -106,8 +106,27 @@ def objective(trial, texts, labels, folds):
     return float(np.mean(scores))
 
 
-def run_study(frame, n_trials=N_TRIALS, seed=SAMPLER_SEED, folds=None):
-    """The study over `frame` (train_pool train only), with folds from family_folds."""
+def progress_line(study, trial, n_trials) -> str:
+    """One line per finished trial: its state and score, the best so far, and its duration."""
+    width = len(str(n_trials))
+    if trial.state == optuna.trial.TrialState.COMPLETE:
+        result = f"COMPLETE {trial.value:.4f}"
+    elif trial.state == optuna.trial.TrialState.PRUNED:
+        folds_run = sum(key.startswith("auroc_fold") for key in trial.user_attrs)
+        result = f"PRUNED after {folds_run} fold{'s' if folds_run != 1 else ''}"
+    else:
+        result = trial.state.name
+    try:
+        best = f"best {study.best_value:.4f} (#{study.best_trial.number})"
+    except ValueError:  # no trial has completed yet
+        best = "best -"
+    seconds = trial.duration.total_seconds() if trial.duration else float("nan")
+    return f"trial {trial.number + 1:>{width}}/{n_trials}  {result:<22} {best}  {seconds:5.1f}s"
+
+
+def run_study(frame, n_trials=N_TRIALS, seed=SAMPLER_SEED, folds=None, progress=True):
+    """The study over `frame` (train_pool train only), with folds from family_folds. With
+    progress, prints one line per finished trial."""
     check_fit_rows(frame)
     folds = family_folds(frame, k=FOLDS, seed=FOLD_SEED) if folds is None else folds
     texts, labels = frame.text.to_numpy(), frame.label.to_numpy()
@@ -118,7 +137,9 @@ def run_study(frame, n_trials=N_TRIALS, seed=SAMPLER_SEED, folds=None):
     )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ConvergenceWarning)
-        study.optimize(lambda t: objective(t, texts, labels, folds), n_trials=n_trials)
+        callbacks = [lambda s, t: print(progress_line(s, t, n_trials), flush=True)] if progress else []
+        study.optimize(lambda t: objective(t, texts, labels, folds), n_trials=n_trials,
+                       callbacks=callbacks)
     return study, folds
 
 
