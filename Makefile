@@ -130,9 +130,10 @@ UV_GROUP = $(if $(filter perplexity,$(DETECTOR)),--group perplexity,)
 evaluate: ## Fit and evaluate the selected detector
 	PYTHONPATH="$(SRC_PATH)" uv run $(UV_GROUP) python src/models/train.py --detector $(DETECTOR) $(if $(SCORES),--scores $(SCORES),) $(if $(OUT),--out $(OUT),)
 
-# Spec: docs/superpowers/specs/2026-11-18-b1-optuna-design.md. Under an hour on a laptop.
+# Spec: docs/superpowers/specs/2026-11-18-b1-optuna-design.md. About an hour on a laptop.
+# ARGS=--log-only uploads a finished study to MLflow without re-running it.
 b1-optuna: ## Search B1's TF-IDF settings with Optuna on family folds, then evaluate the best once
-	PYTHONPATH="$(SRC_PATH)" uv run python src/models/tfidf_optuna.py
+	PYTHONPATH="$(SRC_PATH)" uv run python src/models/tfidf_optuna.py $(ARGS)
 
 b2-report: ## Choose B2's configuration on val and write b2_verdict.md and b2_deberta_<row>.csv
 	PYTHONPATH="$(SRC_PATH)" uv run python src/eval/verdict.py --scores-dir report/deberta_scores --b1 report/baselines/b1_tfidf_lr.csv --out-dir report/baselines

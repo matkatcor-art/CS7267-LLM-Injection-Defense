@@ -47,7 +47,7 @@ Plan: `docs/superpowers/plans/2026-11-07-deberta-detector.md`, Task 11.
 This is the largest gap: the requirement names Optuna or Ray, and the project has neither.
 
 - [x] 2.1 Add `optuna` as a dependency (`uv add optuna`) and an `optuna` storage that MLflow can see (Optuna's MLflow callback, or log each trial as a nested run).
-- [ ] 2.2 **B1 study** (cheap, the main search): search `C` (log-uniform, wider than today's grid), word vs character n-grams, n-gram range, `min_df`, `max_features`, `sublinear_tf` and `class_weight`. Objective: mean AUROC over the family-grouped folds from task 3, on `train_pool` only. Use a fixed sampler seed and a fixed trial budget (for example 100 trials).
+- [x] 2.2 **B1 study** (cheap, the main search): search `C` (log-uniform, wider than today's grid), word vs character n-grams, n-gram range, `min_df`, `max_features`, `sublinear_tf` and `class_weight`. Objective: mean AUROC over the family-grouped folds from task 3, on `train_pool` only. Use a fixed sampler seed and a fixed trial budget (for example 100 trials).
 - [ ] 2.3 **B2 study** (small, Colab budget): 6 to 10 one-seed, val-only trials over learning rate, epochs and `pairwise_weight`, using Optuna's ask-and-tell interface so each Colab run reports one trial. This replaces the two-point `pairwise_weight` sweep in task 1.1 if it is ready in time. Otherwise keep the sweep and report the B2 search as limited.
 - [ ] 2.4 **B0:** search `max_context` and `stride` on val, or state in the write-up that B0 is an untuned reference and why.
 - [ ] 2.5 Save each study's best parameters, the trial table and Optuna's importance and history plots under `report/phase4/`.

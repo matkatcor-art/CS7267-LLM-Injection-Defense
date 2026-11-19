@@ -13,7 +13,7 @@ from harness import load_data
 from tfidf import TfidfDetector
 from tfidf_optuna import (
     CHAR_RANGES, TunedTfidfDetector, check_fit_rows, detector_params, main, progress_line, run_study,
-    suggest,
+    suggest, trial_params, trials_table,
 )
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -117,3 +117,60 @@ def test_main_writes_the_study_and_the_report(dataset_path, tmp_path, monkeypatc
     assert set(written.detector) == {"tfidf-optuna"}
     assert set(written.eval_set) == {"test", "mcptox", "msb"}
     assert list(written.columns) == list(report.columns)
+
+
+def test_trials_table_is_the_same_from_memory_and_from_csv(dataset_path, tmp_path):
+    study, _ = run_study(train_rows(dataset_path), n_trials=6, progress=False)
+    raw = tmp_path / "raw.csv"
+    study.trials_dataframe().to_csv(raw, index=False)  # the format the first full run saved
+    from_memory = trials_table(study.trials_dataframe())
+    from_csv = trials_table(pd.read_csv(raw))
+    pd.testing.assert_frame_equal(from_memory.drop(columns="duration_s"),
+                                  from_csv.drop(columns="duration_s"), check_dtype=False)
+    for name in ("max_features", "class_weight"):
+        assert from_memory[name].notna().all()  # None is written as "none", never left empty
+
+
+def test_trial_params_drop_unused_settings_and_keep_none():
+    row = {"number": 0, "state": "COMPLETE", "value": 0.9, "duration_s": 1.0, "C": 1.0,
+           "features": "word", "word_max_n": 2, "char_range": float("nan"), "max_features": "none",
+           "auroc_fold0": 0.9}
+    assert trial_params(row) == {"C": 1.0, "features": "word", "word_max_n": 2, "max_features": "none"}
+
+
+def runs(uri):
+    import mlflow
+
+    mlflow.set_tracking_uri(uri)
+    return mlflow.search_runs(experiment_names=["phase3-detectors"])
+
+
+def test_log_only_uploads_the_saved_study_with_the_same_threshold(dataset_path, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # a sqlite tracking store puts artifacts in ./mlruns
+    uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+    out_dir, out = tmp_path / "study", tmp_path / "report.csv"
+    common = ["--data", str(dataset_path), "--out-dir", str(out_dir), "--out", str(out),
+              "--tracking-uri", uri]
+    main(common + ["--n-trials", "3", "--n-boot", "10"])
+    main(common + ["--log-only"])
+    logged = runs(uri)
+    parents = logged[logged["tags.mlflow.runName"] == "tfidf-optuna"]
+    trials = logged[logged["tags.mlflow.runName"].str.startswith("trial-")]
+    assert len(parents) == 2 and len(trials) == 6
+    assert parents["params.threshold"].nunique() == 1
+    assert parents["params.best_trial"].nunique() == 1
+    assert set(trials["tags.mlflow.parentRunId"]) == set(parents.run_id)
+
+
+def test_a_failed_upload_keeps_the_files_and_says_how_to_retry(dataset_path, tmp_path, monkeypatch):
+    import tfidf_optuna
+
+    def broken(*args, **kwargs):
+        raise ConnectionError("503")
+
+    monkeypatch.setattr(tfidf_optuna, "log_study", broken)
+    out_dir, out = tmp_path / "study", tmp_path / "report.csv"
+    with pytest.raises(SystemExit, match="ARGS=--log-only"):
+        main(["--data", str(dataset_path), "--n-trials", "2", "--n-boot", "10", "--out-dir",
+              str(out_dir), "--out", str(out), "--tracking-uri", "http://127.0.0.1:1"])
+    assert (out_dir / "best_params.json").exists() and out.exists()

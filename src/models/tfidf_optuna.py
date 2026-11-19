@@ -143,6 +143,37 @@ def run_study(frame, n_trials=N_TRIALS, seed=SAMPLER_SEED, folds=None, progress=
     return study, folds
 
 
+ALWAYS_SAMPLED_NONE = ("max_features", "class_weight")  # sampled every trial; None is a value
+
+
+def trials_table(trials) -> pd.DataFrame:
+    """Optuna's trials_dataframe (in memory, or read back from trials.csv) as one row per trial:
+    number, state, value, duration_s, the parameters without the params_ prefix and the fold
+    AUROCs. None is written as "none" for parameters sampled in every trial, so it cannot be
+    confused with a parameter the trial did not use (left empty)."""
+    table = pd.DataFrame({"number": trials["number"], "state": trials["state"], "value": trials["value"]})
+    table["duration_s"] = pd.to_timedelta(trials["duration"]).dt.total_seconds()
+    for column in sorted(c for c in trials.columns if c.startswith("params_")):
+        name = column.removeprefix("params_")
+        values = trials[column]
+        if name in ALWAYS_SAMPLED_NONE:
+            values = values.astype(object).where(values.notna(), "none")
+        if name in ("max_features", "min_df", "word_max_n"):
+            values = values.where(values.isin(["none"]), pd.to_numeric(values, errors="coerce")).astype(object)
+            values = values.map(lambda v: int(v) if isinstance(v, float) and v == v else v)
+        table[name] = values
+    for column in sorted(c for c in trials.columns if c.startswith("user_attrs_auroc_fold")):
+        table[column.removeprefix("user_attrs_")] = trials[column]
+    return table
+
+
+def trial_params(row) -> dict:
+    """One trials_table row's parameters as logged: unused ones dropped, "none" kept."""
+    skip = {"number", "state", "value", "duration_s"}
+    return {k: v for k, v in row.items()
+            if k not in skip and not k.startswith("auroc_fold") and not (isinstance(v, float) and v != v)}
+
+
 def save_study(study, frame, folds, out_dir):
     """best_params.json, trials.csv, folds.csv and the history and importance plots."""
     import matplotlib
@@ -158,7 +189,7 @@ def save_study(study, frame, folds, out_dir):
          "fold_auroc": {k: v for k, v in best.user_attrs.items() if k.startswith("auroc_fold")},
          "n_trials": len(study.trials), "sampler_seed": SAMPLER_SEED, "folds": FOLDS,
          "fold_seed": FOLD_SEED}, indent=2))
-    study.trials_dataframe().to_csv(out_dir / "trials.csv", index=False)
+    trials_table(study.trials_dataframe()).to_csv(out_dir / "trials.csv", index=False)
     (frame.assign(fold=folds).groupby(["fold", "source", "label"]).size()
      .rename("rows").reset_index().to_csv(out_dir / "folds.csv", index=False))
     for name, draw in (("history", plots.plot_optimization_history),
@@ -171,25 +202,73 @@ def save_study(study, frame, folds, out_dir):
             print(f"skipped {name}.png: {exc}")
 
 
-def log_study(uri, study, detector, params, threshold, report, args):
-    """One tfidf-optuna run like every other detector's, with one nested run per trial."""
+def log_study(uri, trials, params, threshold, report, args):
+    """One tfidf-optuna run like every other detector's, with one nested run per trial.
+    `trials` is a trials_table."""
     import mlflow
 
     from train import EXPERIMENT, metric_items
 
     mlflow.set_tracking_uri(uri)
     mlflow.set_experiment(EXPERIMENT)
-    with mlflow.start_run(run_name=detector.name):
-        mlflow.log_params({"detector": detector.name, "target_fpr": args.target_fpr,
+    with mlflow.start_run(run_name=TunedTfidfDetector.name):
+        mlflow.log_params({"detector": TunedTfidfDetector.name, "target_fpr": args.target_fpr,
                            "threshold": threshold, "n_boot": args.n_boot, **params})
         mlflow.log_metrics(metric_items(report))
         mlflow.log_text(report.to_csv(index=False), "report.csv")
         mlflow.log_artifacts(args.out_dir, "study")
-        for trial in study.trials:
-            with mlflow.start_run(run_name=f"trial-{trial.number}", nested=True):
-                mlflow.log_params({**trial.params, "state": trial.state.name})
-                if trial.value is not None:
-                    mlflow.log_metric("mean_cv_auroc", trial.value)
+        for row in trials.to_dict("records"):
+            with mlflow.start_run(run_name=f"trial-{row['number']}", nested=True):
+                mlflow.log_params({**trial_params(row), "state": row["state"]})
+                if row["value"] == row["value"]:  # not NaN
+                    mlflow.log_metric("mean_cv_auroc", row["value"])
+
+
+def run_params(best: dict, n_trials: int) -> dict:
+    """The tfidf-optuna run's params, from best_params.json's fields."""
+    return {**best["params"], "best_trial": best["trial"], "mean_cv_auroc": best["mean_cv_auroc"],
+            "n_trials": n_trials, "sampler_seed": SAMPLER_SEED, "folds": FOLDS, "fold_seed": FOLD_SEED}
+
+
+def fit_best(params: dict, data):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConvergenceWarning)
+        return TunedTfidfDetector(**detector_params(params)).fit(data.train.text, data.train.label)
+
+
+def log_or_explain(args, trials, params, threshold, report):
+    """Log to MLflow if asked. A failed upload never loses a finished study: the files are
+    already written, and --log-only uploads them later without re-running it."""
+    if not args.tracking_uri:
+        print("not logged to MLflow: pass --tracking-uri or set MLFLOW_TRACKING_URI")
+        return
+    try:
+        log_study(args.tracking_uri, trials, params, threshold, report, args)
+    except Exception as exc:  # noqa: BLE001 - any upload failure gets the same advice
+        raise SystemExit(f"MLflow logging failed ({type(exc).__name__}: {exc}).\nThe study and report "
+                         f"are saved; upload them later with: make b1-optuna ARGS=--log-only") from exc
+    print(f"logged to MLflow at {args.tracking_uri}")
+
+
+def log_only(args):
+    """Upload a finished study's saved files. The threshold is recomputed by refitting the best
+    settings on train (seconds, deterministic) instead of re-running the study."""
+    from harness import load_data
+    from metrics import threshold_at_fpr
+
+    out_dir = Path(args.out_dir)
+    best = json.loads((out_dir / "best_params.json").read_text())
+    trials = pd.read_csv(out_dir / "trials.csv")
+    if "params_C" in trials.columns:  # written before trials_table existed
+        trials = trials_table(trials)
+        trials.to_csv(out_dir / "trials.csv", index=False)
+    report = pd.read_csv(args.out)
+    data = load_data(args.data)
+    detector = fit_best(best["params"], data)
+    val_scores = detector.predict_proba(data.val.text)
+    threshold = threshold_at_fpr(val_scores[data.val.label.to_numpy() == 0], args.target_fpr)
+    print(f"{detector.name}: threshold {threshold:.6g} at {args.target_fpr:.0%} FPR on val (refit)")
+    log_or_explain(args, trials, run_params(best, len(trials)), threshold, report)
 
 
 def main(argv=None):
@@ -204,7 +283,11 @@ def main(argv=None):
     parser.add_argument("--out-dir", default="report/phase4/b1_optuna")
     parser.add_argument("--out", default="report/baselines/b1_tfidf_lr_optuna.csv")
     parser.add_argument("--tracking-uri", default=os.environ.get("MLFLOW_TRACKING_URI"))
+    parser.add_argument("--log-only", action="store_true",
+                        help="Upload a finished study's saved files to MLflow; do not re-run it")
     args = parser.parse_args(argv)
+    if args.log_only:
+        return log_only(args)
 
     frame = load("fit", path=args.data, roles=["train_pool"], splits=["train"]).to_pandas()
     optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -216,25 +299,18 @@ def main(argv=None):
 
     # Refit the best settings on all of train; the harness sets the threshold on val.
     data = load_data(args.data)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", ConvergenceWarning)
-        detector = TunedTfidfDetector(**detector_params(study.best_params)).fit(data.train.text,
-                                                                                data.train.label)
+    detector = fit_best(study.best_params, data)
     threshold, report = evaluate(detector, data, args.target_fpr, args.n_boot)
-    params = {**study.best_params, "best_trial": study.best_trial.number,
-              "mean_cv_auroc": study.best_value, "n_trials": len(study.trials),
-              "sampler_seed": SAMPLER_SEED, "folds": FOLDS, "fold_seed": FOLD_SEED}
+    best = {"params": study.best_params, "trial": study.best_trial.number,
+            "mean_cv_auroc": study.best_value}
+    params = run_params(best, len(study.trials))
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     report.to_csv(args.out, index=False)
     _, reference = evaluate(fit_detector("length", data)[0], data, args.target_fpr, args.n_boot)
     print(f"{detector.name}: threshold {threshold:.6g} at {args.target_fpr:.0%} FPR on val; wrote {args.out}")
     print(compare(report, reference)[SHOWN].to_string(index=False, float_format=lambda v: f"{v:.3f}"))
-    if args.tracking_uri:
-        log_study(args.tracking_uri, study, detector, params, threshold, report, args)
-        print(f"logged to MLflow at {args.tracking_uri}")
-    else:
-        print("not logged to MLflow: pass --tracking-uri or set MLFLOW_TRACKING_URI")
+    log_or_explain(args, trials_table(study.trials_dataframe()), params, threshold, report)
     return study, report
 
 

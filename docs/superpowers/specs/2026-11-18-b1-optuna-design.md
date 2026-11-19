@@ -1,7 +1,7 @@
 # B1-Optuna: searching B1's features and regularization by family-grouped CV
 
 Date: 2026-11-18
-Status: approved (objective and budget chosen 2026-11-18)
+Status: run 2026-11-18; result: better than B1 under the decision rule (see the plan, Task 5)
 Serves: Phase 4 task 2.2 (hyperparameter search), and the "word vs character n-grams" row of
 the task 4 ablation table.
 
