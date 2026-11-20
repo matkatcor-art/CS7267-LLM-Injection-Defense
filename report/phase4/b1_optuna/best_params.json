@@ -1,0 +1,26 @@
+{
+  "trial": 93,
+  "mean_cv_auroc": 0.9214587707714583,
+  "params": {
+    "C": 6.378317398269826,
+    "features": "both",
+    "word_max_n": 3,
+    "char_analyzer": "char",
+    "char_range": "2-4",
+    "min_df": 1,
+    "max_features": 200000,
+    "sublinear_tf": true,
+    "class_weight": "balanced"
+  },
+  "fold_auroc": {
+    "auroc_fold0": 0.9664735459401153,
+    "auroc_fold1": 0.8694310262907823,
+    "auroc_fold2": 0.886090491339696,
+    "auroc_fold3": 0.9075931625810706,
+    "auroc_fold4": 0.9777056277056276
+  },
+  "n_trials": 100,
+  "sampler_seed": 7267,
+  "folds": 5,
+  "fold_seed": 7267
+}
