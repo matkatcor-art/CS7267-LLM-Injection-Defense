@@ -36,7 +36,7 @@ Plan: `docs/superpowers/plans/2026-11-07-deberta-detector.md`, Task 11.
 - [ ] 1.3 Row 2, three seeds, at the chosen weight.
 - [ ] 1.4 Row 3 (BIPIA only), three seeds. This is the main ablation.
 - [ ] 1.5 Track the score files: `dvc add report/deberta_scores`, commit the `.dvc` file, then `make push-data`.
-- [ ] 1.6 Log every reported run to MLflow (`make evaluate DETECTOR=deberta SCORES=...`).
+- [x] 1.6 Log every reported run to MLflow (`make evaluate DETECTOR=deberta SCORES=...`).
 - [ ] 1.7 `make b2-report`: writes `b2_deberta_row{1,2,3}.csv` and `b2_verdict.md`. Do not rerun anything after reading the verdict.
 - [ ] 1.8 DVC-track seed 7267 of the selected row (`make push-large`).
 
@@ -46,15 +46,15 @@ Plan: `docs/superpowers/plans/2026-11-07-deberta-detector.md`, Task 11.
 
 This is the largest gap: the requirement names Optuna or Ray, and the project has neither.
 
-- [ ] 2.1 Add `optuna` as a dependency (`uv add optuna`) and an `optuna` storage that MLflow can see (Optuna's MLflow callback, or log each trial as a nested run).
-- [ ] 2.2 **B1 study** (cheap, the main search): search `C` (log-uniform, wider than today's grid), word vs character n-grams, n-gram range, `min_df`, `max_features`, `sublinear_tf` and `class_weight`. Objective: mean AUROC over the family-grouped folds from task 3, on `train_pool` only. Use a fixed sampler seed and a fixed trial budget (for example 100 trials).
+- [x] 2.1 Add `optuna` as a dependency (`uv add optuna`) and an `optuna` storage that MLflow can see (Optuna's MLflow callback, or log each trial as a nested run).
+- [x] 2.2 **B1 study** (cheap, the main search): search `C` (log-uniform, wider than today's grid), word vs character n-grams, n-gram range, `min_df`, `max_features`, `sublinear_tf` and `class_weight`. Objective: mean AUROC over the family-grouped folds from task 3, on `train_pool` only. Use a fixed sampler seed and a fixed trial budget (for example 100 trials).
 - [ ] 2.3 **B2 study** (small, Colab budget): 6 to 10 one-seed, val-only trials over learning rate, epochs and `pairwise_weight`, using Optuna's ask-and-tell interface so each Colab run reports one trial. This replaces the two-point `pairwise_weight` sweep in task 1.1 if it is ready in time. Otherwise keep the sweep and report the B2 search as limited.
 - [ ] 2.4 **B0:** search `max_context` and `stride` on val, or state in the write-up that B0 is an untuned reference and why.
 - [ ] 2.5 Save each study's best parameters, the trial table and Optuna's importance and history plots under `report/phase4/`.
 
 **Guard:** no study may read MCPTox or MSB. The objective must load data only through `dataset.load("fit", ...)`, which raises `HoldoutError` otherwise. Add a test for this.
 
-**Spec conflict to resolve:** the B1-famcv spec lists "extending B1's `C` grid" as a non-goal. The course requirement overrides it. Either amend the spec, or run the Optuna study as a separate, clearly named B1 variant (`b1_optuna`) next to B1 and B1-famcv.
+**Spec conflict (resolved 2026-11-18):** the B1-famcv spec lists "extending B1's `C` grid" as a non-goal. The course requirement overrides it. Either amend the spec, or run the Optuna study as a separate, clearly named B1 variant (`b1_optuna`) next to B1 and B1-famcv. Resolved as a separate variant, `tfidf-optuna`: spec `docs/superpowers/specs/2026-11-18-b1-optuna-design.md`, plan `docs/superpowers/plans/2026-11-18-b1-optuna.md`.
 
 ### 3. Implement cross-validation with confidence intervals (CV)
 
@@ -96,7 +96,7 @@ The key design choices already identified, and the run that tests each:
 ### 6. Tests (engineering)
 
 - [ ] 6.1 Tests for the config loader: defaults, overrides, and an unknown key is an error.
-- [ ] 6.2 Tests for the Optuna objective on a tiny fixture: fixed seed gives the same best trial; the objective refuses holdout data.
+- [x] 6.2 Tests for the Optuna objective on a tiny fixture: fixed seed gives the same best trial; the objective refuses holdout data.
 - [ ] 6.3 Tests for the fold assignment (planned in the famcv plan): twins stay together, no family spans two folds.
 - [x] 6.4 Fix the three deferred B2 minors: catch NaN scores where they are produced, add gradient clipping, and check score-file labels at evaluate time. Add a test for each.
 - [ ] 6.5 Run the full suite in CI on each PR (a GitHub Actions workflow running `uv run pytest`), if the team does not have one yet.

@@ -1,0 +1,6 @@
+outs:
+- md5: 37c2ed875ef8d7a5cbec53ae3f106080.dir
+  size: 2632223
+  nfiles: 12
+  hash: md5
+  path: deberta_scores
