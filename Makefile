@@ -19,7 +19,7 @@ NEWSQA_CSV := data/external/newsqa/combined-newsqa-data-v1.csv
 NEWSQA_COMMIT := d5bb9e9640e2ed7a31e209393376549d737d276b
 NEWSQA_IMAGE := bryant1410/newsqa@sha256:be80e12652517a01bded32156578abe406f5bbb1f643350f46f6007c6be65423
 
-.PHONY: help install r2-remote r2-credentials r2-check r2-check-write check-remote data push-data push-large newsqa report eda-report evaluate b1-optuna b2-report
+.PHONY: help install r2-remote r2-credentials r2-check r2-check-write check-remote data push-data push-large newsqa report phase4-tables report-phase4 eda-report evaluate b1-optuna b2-report
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -115,6 +115,18 @@ report: ## Build the Phase 2 report PDF with pandoc and tectonic
 	cd $(REPORT_DIR) && tail -n +2 ../../DATA_CARD.md | pandoc -f markdown+lists_without_preceding_blankline report.md - --citeproc \
 		--lua-filter=repo-links.lua --pdf-engine=tectonic -H header.tex -o report.pdf
 	@echo "Wrote $(REPORT_DIR)/report.pdf"
+
+PHASE4_DIR := report/phase4
+
+# Tables come from the committed result files; paste changed tables from tables.md into
+# report.md, then `make phase4-tables ARGS=--check`.
+phase4-tables: ## Regenerate the Phase 4 report's tables.md and AUROC figure (ARGS=--check to verify report.md)
+	uv run python $(PHASE4_DIR)/make_tables.py $(ARGS)
+
+report-phase4: ## Build the Phase 4 report PDF with pandoc and tectonic
+	cd $(PHASE4_DIR) && pandoc -f markdown+lists_without_preceding_blankline report.md --citeproc \
+		--lua-filter=repo-links.lua --pdf-engine=tectonic -H header.tex -o report.pdf
+	@echo "Wrote $(PHASE4_DIR)/report.pdf"
 
 EDA_DIR := report/phase3
 
